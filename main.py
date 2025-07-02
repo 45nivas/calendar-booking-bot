@@ -1,9 +1,10 @@
-import os
-import logging
+# main.py  ── FastAPI backend for Calendar‑Booking bot
+import os, json, logging, importlib.util
+from datetime import datetime, timedelta
+from typing import Dict
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Dict
-from datetime import datetime, timedelta
 
 from langchain.agents import initialize_agent, Tool
 from langchain.memory import ConversationBufferMemory
@@ -13,155 +14,218 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 from dotenv import load_dotenv
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()  # → loads .env when you run locally
 
-# --- Logging ---
+# ────────────────────────────── Logging ──────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def share_calendar_with_user(service, calendar_id, user_email, role="owner"):
+# ─────────────────────── Helpers for credentials ─────────────────────
+def _get_streamlit_secrets():
     """
-    Share the Google Calendar with a user.
-    role: 'owner' (full control) or 'writer' (edit access)
+    Import streamlit *dynamically* so local uvicorn runs don’t
+    require Streamlit in the venv. Returns st.secrets or {}.
     """
-    try:
-        rule = {
-            'scope': {
-                'type': 'user',
-                'value': user_email,
-            },
-            'role': role
-        }
-        created_rule = service.acl().insert(calendarId=calendar_id, body=rule).execute()
-        logger.info(f"Shared calendar with {user_email}. Rule ID: {created_rule['id']}")
-    except Exception as e:
-        logger.error(f"Failed to share calendar with {user_email}: {e}")
+    if importlib.util.find_spec("streamlit"):
+        import streamlit as st
+        return getattr(st, "secrets", {})
+    return {}
 
-# --- Google Calendar Setup ---
-SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
+def _load_google_credentials() -> service_account.Credentials | None:
+    """Return google service‑account creds or None."""
+    scopes = ["https://www.googleapis.com/auth/calendar"]
+    st_secrets = _get_streamlit_secrets()
+
+    # 1️⃣ Streamlit Cloud / secrets.toml
+    try:
+        creds_toml = st_secrets.get("google", {}).get("credentials")
+        if creds_toml:
+            logger.info("Loaded Google credentials from st.secrets")
+            return service_account.Credentials.from_service_account_info(
+                json.loads(creds_toml), scopes=scopes
+            )
+    except Exception as e:
+        logger.warning(f"Could not read creds from st.secrets: {e}")
+
+    # 2️⃣ Environment variable with raw JSON
+    if "GOOGLE_SERVICE_ACCOUNT_JSON" in os.environ:
+        try:
+            logger.info("Loaded Google credentials from env var GOOGLE_SERVICE_ACCOUNT_JSON")
+            return service_account.Credentials.from_service_account_info(
+                json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]), scopes=scopes
+            )
+        except Exception as e:
+            logger.warning(f"GOOGLE_SERVICE_ACCOUNT_JSON invalid: {e}")
+
+    # 3️⃣ Credentials file on disk
+    default_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
+    if os.path.exists(default_path):
+        try:
+            logger.info(f"Loaded Google credentials from file {default_path}")
+            return service_account.Credentials.from_service_account_file(
+                default_path, scopes=scopes
+            )
+        except Exception as e:
+            logger.warning(f"credentials.json invalid: {e}")
+
+    # Fallback → no creds
+    return None
+
+
+# ─────────────────────── Google Calendar client ──────────────────────
 CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+credentials = _load_google_credentials()
 
-try:
-    credentials = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/calendar"]
-    )
+if credentials:
     calendar_service = build("calendar", "v3", credentials=credentials)
-    # --- Share calendar with a user (call this ONCE, not every run in production) ---
-    share_calendar_with_user(calendar_service, CALENDAR_ID, "mattanivas37@gmail.com", role="owner")
-except Exception as e:
-    logger.error(f"Google Calendar setup failed: {e}")
+else:
     calendar_service = None
+    logger.error(
+        "Google Calendar credentials not found. "
+        "Availability & booking tools will reply with an error message."
+    )
 
-# --- Calendar Tool Functions ---
+# ────────────────── Calendar helper functions / tools ─────────────────
+def _no_service_msg() -> str:
+    return (
+        "Google Calendar is not configured (missing credentials). "
+        "Please contact the administrator."
+    )
+
 def check_availability(date: str) -> str:
+    """Tool: check all events on a given date (YYYY‑MM‑DD, UTC)."""
+    if not calendar_service:
+        return _no_service_msg()
     try:
-        events_result = calendar_service.events().list(
-            calendarId=CALENDAR_ID,
-            timeMin=f"{date}T00:00:00Z",
-            timeMax=f"{date}T23:59:59Z",
-            singleEvents=True,
-            orderBy="startTime"
-        ).execute()
-        events = events_result.get("items", [])
+        events = (
+            calendar_service.events()
+            .list(
+                calendarId=CALENDAR_ID,
+                timeMin=f"{date}T00:00:00Z",
+                timeMax=f"{date}T23:59:59Z",
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+            .get("items", [])
+        )
         if not events:
-            return f"No events found on {date}. All slots are available."
-        else:
-            booked = [f"{e['start'].get('dateTime', e['start'].get('date'))} - {e.get('summary', 'No title')}" for e in events]
-            return f"Booked slots on {date}: " + "; ".join(booked)
+            return f"All slots are free on {date}."
+        booked = [
+            f"{e['start'].get('dateTime', e['start'].get('date'))} — {e.get('summary', 'No title')}"
+            for e in events
+        ]
+        return "Booked slots on {0}: {1}".format(date, "; ".join(booked))
     except Exception as e:
-        logger.error(f"Error in check_availability: {e}")
+        logger.error(f"check_availability: {e}")
         return f"Failed to check availability: {e}"
 
 def suggest_slots(date_range: str) -> str:
+    """
+    Tool: check free/busy between two dates. `date_range` format
+    → 'YYYY‑MM‑DD to YYYY‑MM‑DD'
+    """
+    if not calendar_service:
+        return _no_service_msg()
     try:
         start, end = [d.strip() for d in date_range.split("to")]
-        freebusy_query = {
-            "timeMin": f"{start}T00:00:00Z",
-            "timeMax": f"{end}T23:59:59Z",
-            "items": [{"id": CALENDAR_ID}]
-        }
-        fb = calendar_service.freebusy().query(body=freebusy_query).execute()
+        fb = (
+            calendar_service.freebusy()
+            .query(
+                body={
+                    "timeMin": f"{start}T00:00:00Z",
+                    "timeMax": f"{end}T23:59:59Z",
+                    "items": [{"id": CALENDAR_ID}],
+                }
+            )
+            .execute()
+        )
         busy = fb["calendars"][CALENDAR_ID]["busy"]
         if not busy:
             return f"All slots are free from {start} to {end}."
-        else:
-            busy_str = "; ".join([f"{b['start']} to {b['end']}" for b in busy])
-            return f"Busy slots: {busy_str}"
+        busy_str = "; ".join(f"{b['start']} → {b['end']}" for b in busy)
+        return f"Busy slots: {busy_str}"
     except Exception as e:
-        logger.error(f"Error in suggest_slots: {e}")
+        logger.error(f"suggest_slots: {e}")
         return f"Failed to suggest slots: {e}"
 
 def book_appointment(input_str: str) -> str:
     """
-    Accepts input as '2025-07-06T14:00:00 John' or '2025-07-06T14:00:00,John'
-    and splits into date_time and user_name.
+    Tool: create a 1‑hour event. Accepts either
+    '2025‑07‑06T14:00:00 John'  or  '2025‑07‑06T14:00:00,John'
+    (UTC time).
     """
+    if not calendar_service:
+        return _no_service_msg()
     try:
-        # Try to split by space or comma
-        if ',' in input_str:
-            date_time, user_name = [x.strip() for x in input_str.split(',', 1)]
-        else:
-            date_time, user_name = input_str.strip().split(' ', 1)
-        dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
-        end_time = (dt + timedelta(hours=1)).isoformat()
+        date_time, user_name = (
+            [x.strip() for x in input_str.split(",", 1)]
+            if "," in input_str
+            else input_str.strip().split(" ", 1)
+        )
+        start_dt = datetime.fromisoformat(date_time.replace("Z", "+00:00"))
+        end_dt = start_dt + timedelta(hours=1)
+
         event = {
             "summary": f"Appointment with {user_name}",
-            "start": {"dateTime": dt.isoformat(), "timeZone": "UTC"},
-            "end": {"dateTime": end_time, "timeZone": "UTC"},
-            "attendees": [],
+            "start": {"dateTime": start_dt.isoformat(), "timeZone": "UTC"},
+            "end": {"dateTime": end_dt.isoformat(), "timeZone": "UTC"},
         }
-        created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-        return f"Booked appointment for {user_name} at {date_time}. Event link: {created.get('htmlLink')}"
+        created = (
+            calendar_service.events()
+            .insert(calendarId=CALENDAR_ID, body=event)
+            .execute()
+        )
+        return f"Booked {user_name} at {date_time}. Link: {created.get('htmlLink')}"
     except Exception as e:
-        logger.error(f"Error in book_appointment: {e}")
+        logger.error(f"book_appointment: {e}", exc_info=True)
         return f"Failed to book appointment: {e}"
 
-# --- LangChain Tool Setup ---
+# ─────────────────── LangChain tools & conversational agent ───────────
 tools = [
     Tool(
         name="check_availability",
         func=check_availability,
-        description="Check calendar availability for a given date (format YYYY-MM-DD)."
+        description="Check calendar availability for a single date (YYYY‑MM‑DD, UTC).",
     ),
     Tool(
         name="suggest_slots",
         func=suggest_slots,
-        description="Suggest available slots (format: 'YYYY-MM-DD to YYYY-MM-DD')."
+        description="Suggest free/busy slots between two dates: 'YYYY‑MM‑DD to YYYY‑MM‑DD'.",
     ),
     Tool(
         name="book_appointment",
         func=book_appointment,
-        description="Book an appointment. Input format: 'YYYY-MM-DDTHH:MM:SS Name' or 'YYYY-MM-DDTHH:MM:SS,Name'"
-    )
+        description="Book a 1‑hour appointment: 'YYYY‑MM‑DDTHH:MM:SS Name' or with a comma.",
+    ),
 ]
 
-# --- FastAPI ---
-app = FastAPI()
+# ─────────────────────────── Groq LLM setup ───────────────────────────
+st_secrets = _get_streamlit_secrets()
+GROQ_API_KEY = (
+    st_secrets.get("GROQ_API_KEY")
+    or os.getenv("GROQ_API_KEY")
+)
 
-# --- Groq LLM ---
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
-    logger.error("GROQ_API_KEY not set in environment!")
-    raise RuntimeError("Set your GROQ_API_KEY environment variable.")
+    # Warn but don’t crash the container – FastAPI will return 500 if the user hits /chat
+    logger.error("GROQ_API_KEY not found in secrets or env vars.")
 
 llm = ChatGroq(
     model="llama3-70b-8192",
     api_key=GROQ_API_KEY,
-    temperature=0.2
+    temperature=0.2,
 )
 
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
 agent = initialize_agent(
-    tools,
-    llm,
-    agent="chat-conversational-react-description",
-    memory=memory,
-    verbose=True
+    tools, llm, agent="chat-conversational-react-description",
+    memory=memory, verbose=True
 )
 
-# --- Pydantic Models ---
+# ────────────────────────── FastAPI endpoints ─────────────────────────
+app = FastAPI()
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -169,16 +233,16 @@ class ChatResponse(BaseModel):
     response: str
 
 @app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(request: ChatRequest):
+def chat_endpoint(req: ChatRequest):
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured.")
     try:
-        user_message = request.message
-        agent_response = agent.run(user_message)
-        return ChatResponse(response=agent_response)
+        return ChatResponse(response=agent.run(req.message))
     except Exception as e:
-        logger.error(f"Error in /chat: {e}", exc_info=True)
+        logger.error("/chat error", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
-# --- Optional Message Routes ---
+# ─────────────── optional basic routes & in‑memory store ──────────────
 class MsgPayload(BaseModel):
     msg_id: int
     msg_name: str
@@ -186,18 +250,18 @@ class MsgPayload(BaseModel):
 messages_list: Dict[int, MsgPayload] = {}
 
 @app.get("/")
-def root() -> dict[str, str]:
-    return {"message": "Hello"}
+def root():
+    return {"message": "Hello from the Calendar‑Booking bot 👋"}
 
 @app.get("/about")
-def about() -> dict[str, str]:
-    return {"message": "Conversational AI Appointment Booking Assistant."}
+def about():
+    return {"message": "Conversational AI Appointment Booking Assistant"}
 
 @app.post("/messages/")
-def add_msg(payload: MsgPayload) -> dict[str, MsgPayload]:
+def add_msg(payload: MsgPayload):
     messages_list[payload.msg_id] = payload
     return {"message": payload}
 
 @app.get("/messages")
-def message_items() -> dict[str, Dict[int, MsgPayload]]:
+def message_items():
     return {"messages": messages_list}
