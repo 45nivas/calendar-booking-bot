@@ -1,4 +1,8 @@
-fastapi
-uvicorn
-httpx
+streamlit
 langchain
+langchain-groq
+openai
+google-api-python-client
+google-auth
+google-auth-oauthlib
+python-dotenv
