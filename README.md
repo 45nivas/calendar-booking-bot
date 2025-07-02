@@ -31,3 +31,27 @@ In addition to these extension there a few settings that are also useful to enab
 - Test the API functionality by navigating to `/docs` URL to view the Swagger UI
 - Configure your Python test in the Test Panel or by triggering the **Python: Configure Tests** command from the Command Palette
 - Run tests in the Test Panel or by clicking the Play Button next to the individual tests in the `test_main.py` file
+
+# 📅 Calendar Booking Bot with Google Calendar Integration
+
+A conversational booking assistant built using **FastAPI**, **Streamlit**, and **Google Calendar API**. The bot can check calendar availability, book appointments, and share Google Calendar event links in real-time.
+
+---
+
+## 🚀 Live Demo
+
+🧠 **Streamlit App**: [Click here to open](https://your-streamlit-app-url.streamlit.app)
+
+---
+
+## 📂 Project Structure
+
+```bash
+.
+├── app.py                 # Streamlit frontend
+├── main.py                # FastAPI backend
+├── google_calendar.py     # Google Calendar logic (auth, availability, booking)
+├── credentials.json       # Google Service Account credentials (DO NOT SHARE)
+├── requirements.txt       # All dependencies
+├── [README.md](http://_vscodecontentref_/1)              # This file
+```
