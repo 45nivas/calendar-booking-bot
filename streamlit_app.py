@@ -170,15 +170,21 @@ st.write("Ask me to check availability, suggest slots, or book an appointment!")
 if "history" not in st.session_state:
     st.session_state.history = []
 
-user_input = st.text_input("Your message:", key="user_input")
-if st.button("Send") and user_input:
-    try:
-        answer = agent.run(user_input)
-    except Exception as e:
-        answer = f"Error: {e}"
-    st.session_state.history.append(("You", user_input))
-    st.session_state.history.append(("Bot", answer))
-    st.experimental_rerun()
+if "pending_input" not in st.session_state:
+    st.session_state.pending_input = ""
+
+def on_send():
+    user_input = st.session_state.pending_input
+    if user_input:
+        try:
+            answer = agent.run(user_input)
+        except Exception as e:
+            answer = f"Error: {e}"
+        st.session_state.history.append(("You", user_input))
+        st.session_state.history.append(("Bot", answer))
+        st.session_state.pending_input = ""
+
+st.text_input("Your message:", key="pending_input", on_change=on_send)
 
 for speaker, msg in st.session_state.history:
     st.markdown(f"**{speaker}:** {msg}")
