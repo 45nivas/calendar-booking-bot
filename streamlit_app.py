@@ -56,7 +56,7 @@ def _load_google_credentials() -> service_account.Credentials | None:
     return None
 
 # ────── Calendar Setup ──────
-CALENDAR_ID = "your@gmail.com"  # ← REPLACE THIS with your actual Gmail address
+CALENDAR_ID = "my-maps-project@potent-howl-456013-k9.iam.gserviceaccount.com"  # ← REPLACE THIS with your actual Gmail address
 
 credentials = _load_google_credentials()
 if credentials:
