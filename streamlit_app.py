@@ -1,4 +1,5 @@
 # streamlit_app.py
+
 import streamlit as st
 import logging
 import importlib.util
@@ -16,10 +17,9 @@ from googleapiclient.discovery import build
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ────── Streamlit secrets helper ──────
+# ────── Load Streamlit secrets ──────
 def _get_streamlit_secrets():
     if importlib.util.find_spec("streamlit"):
-        import streamlit as st
         return getattr(st, "secrets", {})
     return {}
 
@@ -56,16 +56,17 @@ def _load_google_credentials() -> service_account.Credentials | None:
     return None
 
 # ────── Calendar Setup ──────
-CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
-credentials = _load_google_credentials()
+CALENDAR_ID = "your@gmail.com"  # ← REPLACE THIS with your actual Gmail address
 
+credentials = _load_google_credentials()
 if credentials:
     calendar_service = build("calendar", "v3", credentials=credentials)
+    logger.info(f"Using calendar: {CALENDAR_ID}")
 else:
     calendar_service = None
     logger.error("Google Calendar credentials not found. Calendar tools disabled.")
 
-# ────── Google Calendar tools ──────
+# ────── Calendar Tools ──────
 def _no_service_msg() -> str:
     return "Google Calendar is not configured (missing credentials)."
 
@@ -133,13 +134,17 @@ def book_appointment(input_str: str) -> str:
             "start": {"dateTime": start_dt.isoformat(), "timeZone": "UTC"},
             "end": {"dateTime": end_dt.isoformat(), "timeZone": "UTC"},
         }
+        logger.info(f"Creating event: {event}")
         created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-        return f"Booked {user_name} at {date_time}. Link: {created.get('htmlLink')}"
+        logger.info(f"Created event: {json.dumps(created, indent=2)}")
+
+        event_link = created.get('htmlLink') or 'Link unavailable'
+        return f"Booked {user_name} at {date_time}. Link: {event_link}"
     except Exception as e:
         logger.error(f"book_appointment error: {e}", exc_info=True)
         return f"Error booking appointment: {e}"
 
-# ────── LangChain Agent & Tools ──────
+# ────── LangChain Agent Setup ──────
 tools = [
     Tool(name="check_availability", func=check_availability, description="Check calendar availability for a specific date (YYYY-MM-DD UTC)."),
     Tool(name="suggest_slots", func=suggest_slots, description="Suggest free/busy slots: 'YYYY-MM-DD to YYYY-MM-DD'."),
