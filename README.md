@@ -1,57 +1,74 @@
-# FastAPI Template
+[![🧠 AI Calendar Booking Chat](https://img.shields.io/badge/View_ChatGPT_Conversation-Click_Here-blue?style=for-the-badge)](https://chatgpt.com/c/68666923-3e38-8005-ba16-750ddd152f3c)
 
-This sample repo contains the recommended structure for a Python FastAPI project. In this sample, we use `fastapi` to build a web application and the `pytest` to run tests.
 
-For a more in-depth tutorial, see our [Fast API tutorial](https://code.visualstudio.com/docs/python/tutorial-fastapi).
+# 🧠📅 AI Calendar Booking Bot
 
-The code in this repo aims to follow Python style guidelines as outlined in [PEP 8](https://peps.python.org/pep-0008/).
+This is a conversational AI bot built with **LangChain**, **Streamlit**, and **Google Calendar API** that allows users to **book appointments** using natural language, like:
 
-## Set up instructions
-
-This sample makes use of Dev Containers, in order to leverage this setup, make sure you have [Docker installed](https://www.docker.com/products/docker-desktop).
-
-To successfully run this example, we recommend the following VS Code extensions:
-
-- [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-- [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)
-- [Python Debugger](https://marketplace.visualstudio.com/items?itemName=ms-python.debugpy)
-- [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance) 
-
-In addition to these extension there a few settings that are also useful to enable. You can enable to following settings by opening the Settings editor (`Ctrl+,`) and searching for the following settings:
-
-- Python > Analysis > **Type Checking Mode** : `basic`
-- Python > Analysis > Inlay Hints: **Function Return Types** : `enable`
-- Python > Analysis > Inlay Hints: **Variable Types** : `enable`
-
-## Running the sample
-- Open the template folder in VS Code (**File** > **Open Folder...**)
-- Open the Command Palette in VS Code (**View > Command Palette...**) and run the **Dev Container: Reopen in Container** command.
-- Run the app using the Run and Debug view or by pressing `F5`
-- `Ctrl + click` on the URL that shows up on the terminal to open the running application 
-- Test the API functionality by navigating to `/docs` URL to view the Swagger UI
-- Configure your Python test in the Test Panel or by triggering the **Python: Configure Tests** command from the Command Palette
-- Run tests in the Test Panel or by clicking the Play Button next to the individual tests in the `test_main.py` file
-
-# 📅 Calendar Booking Bot with Google Calendar Integration
-
-A conversational booking assistant built using **FastAPI**, **Streamlit**, and **Google Calendar API**. The bot can check calendar availability, book appointments, and share Google Calendar event links in real-time.
-
----
-
-## 🚀 Live Demo
-
-🧠 **Streamlit App**: [Click here to open](https://your-streamlit-app-url.streamlit.app)
-
----
-
-## 📂 Project Structure
-
-```bash
-.
-├── app.py                 # Streamlit frontend
-├── main.py                # FastAPI backend
-├── google_calendar.py     # Google Calendar logic (auth, availability, booking)
-├── credentials.json       # Google Service Account credentials (DO NOT SHARE)
-├── requirements.txt       # All dependencies
-├── [README.md](http://_vscodecontentref_/1)              # This file
 ```
+book appointment with Amma on July 11th, 2025 at 4pm to 7pm
+```
+
+## ✅ Features
+- Natural language booking using Groq LLaMA 3 (70B)
+- Date/time parsing with `dateparser`
+- Google Calendar integration with start and end time
+- Check availability or suggest free/busy slots
+- Hosted frontend with Streamlit
+
+## 🧠 How It Works
+- **LangChain tools** manage:
+  - `book_appointment`
+  - `check_availability`
+  - `suggest_slots`
+- **LangChain Agent** invokes tools using Groq API
+- **Google Calendar API** inserts and retrieves events
+
+## 🛠️ Technologies
+- Python
+- Streamlit
+- LangChain + Groq API (LLaMA 3)
+- Google Calendar API
+- Dateparser
+
+## 🔗 Live App
+[👉 Try the Booking Bot (Streamlit)](https://your-live-url.streamlit.app)
+
+## 📁 Repository
+[📂 GitHub Code](https://github.com/yourusername/ai-calendar-bot)
+
+## 🔑 Setup Instructions
+
+### 1. Clone the Repo
+```bash
+git clone https://github.com/yourusername/ai-calendar-bot
+cd ai-calendar-bot
+```
+
+### 2. Add `.streamlit/secrets.toml`
+```toml
+GROQ_API_KEY = "your-groq-api-key"
+
+[google_credentials]
+type = "service_account"
+project_id = "your-project-id"
+private_key_id = "xxx"
+private_key = "-----BEGIN PRIVATE KEY-----\nXXX\n-----END PRIVATE KEY-----\n"
+client_email = "your-service-account@your-project.iam.gserviceaccount.com"
+client_id = "..."
+auth_uri = "..."
+token_uri = "..."
+auth_provider_x509_cert_url = "..."
+client_x509_cert_url = "..."
+```
+
+### 3. Run locally
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+### 4. Deploy (Railway/Render/etc.)
+Use `requirements.txt` and `streamlit_app.py` for deployment.
+
+---
