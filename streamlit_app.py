@@ -16,6 +16,12 @@ from googleapiclient.discovery import build
 from pytz import timezone
 import dateparser
 import re
+import requests
+
+response = requests.get("https://calendar-fastapi-backend.onrender.com/health")
+if response.status_code == 200:
+    st.success("Backend is live and healthy!")
+
 
 # ─────────────── Logging ───────────────
 logging.basicConfig(level=logging.INFO)
