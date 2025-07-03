@@ -1,6 +1,3 @@
-# streamlit_app.py – Calendar‑booking Chatbot (Streamlit + LangChain + Google Calendar)
-# Updated: 2025‑07‑03 (Fixed: Timezone display issue)
-
 import streamlit as st
 import logging
 import importlib.util
@@ -24,10 +21,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ────── Helpers ──────
-
 def _get_streamlit_secrets():
     return getattr(st, "secrets", {}) if importlib.util.find_spec("streamlit") else {}
-
 
 # ────── Load Google credentials ──────
 def _load_google_credentials() -> Optional[service_account.Credentials]:
@@ -84,27 +79,62 @@ def _parse_user_datetime(dt_str: str) -> datetime:
             settings={"TIMEZONE": "Asia/Kolkata", "RETURN_AS_TIMEZONE_AWARE": False},
         )
         if dt is None:
-            raise ValueError(
-                "Could not parse date/time. Use e.g. '2025-07-04T17:00:00' or '4 July 2025 5pm'."
-            )
+            raise ValueError("Could not parse date/time. Use '10 July 2025 3pm'.")
         return dt
+
+def _split_input(input_str: str) -> Tuple[str, str, str]:
+    try:
+        if "," not in input_str:
+            raise ValueError("Input must contain ',Name' at the end")
+        time_part, name = input_str.split(",", 1)
+        if "to" not in time_part:
+            raise ValueError("Input must include 'to' for time range")
+        start_str, end_str = [x.strip() for x in time_part.split("to")]
+        return start_str, end_str, name.strip()
+    except Exception as e:
+        raise ValueError(f"Invalid input format. Use: '2025-07-10 15:00 to 17:00, Amma' — Error: {e}")
+
+def book_appointment(input_str: str) -> str:
+    if not calendar_service:
+        return _no_service_msg()
+    try:
+        start_str, end_str, user_name = _split_input(input_str)
+
+        ist = timezone("Asia/Kolkata")
+        start_dt = _parse_user_datetime(start_str)
+        end_dt = _parse_user_datetime(end_str)
+
+        ist_start = ist.localize(start_dt) if start_dt.tzinfo is None else start_dt.astimezone(ist)
+        ist_end = ist.localize(end_dt) if end_dt.tzinfo is None else end_dt.astimezone(ist)
+
+        event = {
+            "summary": f"Appointment with {user_name}",
+            "start": {"dateTime": ist_start.isoformat(), "timeZone": "Asia/Kolkata"},
+            "end": {"dateTime": ist_end.isoformat(), "timeZone": "Asia/Kolkata"},
+        }
+
+        created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        event_link = created.get("htmlLink", "Link unavailable")
+        return (
+            f"✅ Booked appointment with {user_name} on {ist_start.strftime('%d %b %Y')} "
+            f"from {ist_start.strftime('%I:%M %p')} to {ist_end.strftime('%I:%M %p')} IST.\n📎 [Event Link]({event_link})"
+        )
+    except Exception as e:
+        logger.error("book_appointment error", exc_info=True)
+        return f"❌ Error booking appointment: {e}"
 
 def check_availability(date: str) -> str:
     if not calendar_service:
         return _no_service_msg()
     try:
-        events = (
-            calendar_service.events()
-            .list(
-                calendarId=CALENDAR_ID,
-                timeMin=f"{date}T00:00:00Z",
-                timeMax=f"{date}T23:59:59Z",
-                singleEvents=True,
-                orderBy="startTime",
-            )
-            .execute()
-            .get("items", [])
-        )
+        events = calendar_service.events().list(
+            calendarId=CALENDAR_ID,
+            timeMin=f"{date}T00:00:00Z",
+            timeMax=f"{date}T23:59:59Z",
+            singleEvents=True,
+            orderBy="startTime",
+        ).execute().get("items", [])
+
         if not events:
             return f"All slots are free on {date}."
         booked = [
@@ -121,17 +151,13 @@ def suggest_slots(date_range: str) -> str:
         return _no_service_msg()
     try:
         start, end = [d.strip() for d in date_range.split("to")]
-        fb = (
-            calendar_service.freebusy()
-            .query(
-                body={
-                    "timeMin": f"{start}T00:00:00Z",
-                    "timeMax": f"{end}T23:59:59Z",
-                    "items": [{"id": CALENDAR_ID}],
-                }
-            )
-            .execute()
-        )
+        fb = calendar_service.freebusy().query(
+            body={
+                "timeMin": f"{start}T00:00:00Z",
+                "timeMax": f"{end}T23:59:59Z",
+                "items": [{"id": CALENDAR_ID}],
+            }
+        ).execute()
         busy = fb["calendars"][CALENDAR_ID]["busy"]
         if not busy:
             return f"All slots are free from {start} to {end}."
@@ -140,38 +166,6 @@ def suggest_slots(date_range: str) -> str:
     except Exception as e:
         logger.error("suggest_slots error", exc_info=True)
         return f"Error suggesting slots: {e}"
-
-def _split_input(input_str: str) -> Tuple[str, str]:
-    if "," in input_str:
-        return [x.strip() for x in input_str.split(",", 1)]
-    return input_str.strip().split(" ", 1)
-
-def book_appointment(input_str: str) -> str:
-    if not calendar_service:
-        return _no_service_msg()
-    try:
-        date_time_str, user_name = _split_input(input_str)
-
-        ist = timezone("Asia/Kolkata")
-        user_dt = _parse_user_datetime(date_time_str)
-        ist_dt = ist.localize(user_dt) if user_dt.tzinfo is None else user_dt.astimezone(ist)
-
-        event = {
-            "summary": f"Appointment with {user_name}",
-            "start": {"dateTime": ist_dt.isoformat(), "timeZone": "Asia/Kolkata"},
-            "end": {"dateTime": (ist_dt + timedelta(hours=1)).isoformat(), "timeZone": "Asia/Kolkata"},
-        }
-
-        logger.info(f"Creating event: {event}")
-        created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-        event_link = created.get("htmlLink", "Link unavailable")
-        return (
-            f"Booked {user_name} at {ist_dt.strftime('%Y-%m-%d %I:%M %p')} IST. "
-            f"Link: {event_link}"
-        )
-    except Exception as e:
-        logger.error("book_appointment error", exc_info=True)
-        return f"Error booking appointment: {e}"
 
 # ────── LangChain Agent Setup ──────
 TOOLS = [
@@ -188,10 +182,11 @@ TOOLS = [
     Tool(
         name="book_appointment",
         func=book_appointment,
-        description="Book a 1‑hour slot: 'YYYY-MM-DDTHH:MM:SS Name' or '...,Name'",
+        description="Book an appointment with start & end time: '2025-07-10 15:00 to 17:00, Amma'",
     ),
 ]
 
+# Load LLM
 st_secrets = _get_streamlit_secrets()
 GROQ_API_KEY = st_secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
@@ -209,8 +204,8 @@ agent = initialize_agent(
 )
 
 # ────── Streamlit UI ──────
-st.title("Calendar Booking Bot 🤖📅")
-st.write("Ask me to check availability, suggest slots, or book an appointment!")
+st.title("🧠📅 AI Calendar Booking Bot")
+st.write("Chat with me to check availability or book appointments with custom timings!")
 
 if "history" not in st.session_state:
     st.session_state.history = []
