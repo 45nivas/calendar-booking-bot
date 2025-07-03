@@ -3,7 +3,7 @@ import logging
 import importlib.util
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Tuple
 
 from langchain.agents import initialize_agent, Tool
@@ -15,6 +15,7 @@ from googleapiclient.discovery import build
 
 from pytz import timezone
 import dateparser
+import re
 
 # ─────────────── Logging ───────────────
 logging.basicConfig(level=logging.INFO)
@@ -70,42 +71,40 @@ else:
 def _no_service_msg() -> str:
     return "Google Calendar is not configured (missing credentials)."
 
-def _parse_user_datetime(dt_str: str) -> datetime:
-    try:
-        return datetime.fromisoformat(dt_str)
-    except ValueError:
-        dt = dateparser.parse(
-            dt_str,
-            settings={"TIMEZONE": "Asia/Kolkata", "RETURN_AS_TIMEZONE_AWARE": False},
-        )
-        if dt is None:
-            raise ValueError("Could not parse date/time. Use '10 July 2025 3pm'.")
-        return dt
+def extract_datetime_range(input_str: str) -> tuple:
+    date_match = re.search(r'on\s+(.*?)(?:\sat|\sfrom|\sbetween)', input_str, re.IGNORECASE)
+    if not date_match:
+        raise ValueError("Could not find a date in the input.")
+    date_str = date_match.group(1).strip()
 
-def _split_input(input_str: str) -> Tuple[str, str, str]:
-    try:
-        if "," not in input_str:
-            raise ValueError("Input must contain ',Name' at the end")
-        time_part, name = input_str.split(",", 1)
-        if "to" not in time_part:
-            raise ValueError("Input must include 'to' for time range")
-        start_str, end_str = [x.strip() for x in time_part.split("to")]
-        return start_str, end_str, name.strip()
-    except Exception as e:
-        raise ValueError(f"Invalid input format. Use: '2025-07-10 15:00 to 17:00, Amma' — Error: {e}")
+    time_match = re.search(r'at\s+([0-9:apm\s]+)\s*(?:to|-)\s*([0-9:apm\s]+)', input_str, re.IGNORECASE)
+    if not time_match:
+        raise ValueError("Could not find a time range in the input.")
+    start_time_str, end_time_str = time_match.groups()
+
+    person_match = re.search(r'with\s+([\w\s]+?)(?=\s+on|\s+at)', input_str, re.IGNORECASE)
+    person = person_match.group(1).strip() if person_match else "Guest"
+
+    start_dt = dateparser.parse(f"{date_str} {start_time_str}", settings={"TIMEZONE": "Asia/Kolkata"})
+    end_dt = dateparser.parse(f"{date_str} {end_time_str}", settings={"TIMEZONE": "Asia/Kolkata"})
+
+    if not start_dt or not end_dt:
+        raise ValueError("Could not parse start or end datetime.")
+
+    return start_dt, end_dt, person
 
 def book_appointment(input_str: str) -> str:
     if not calendar_service:
         return _no_service_msg()
     try:
-        start_str, end_str, user_name = _split_input(input_str)
+        start_dt, end_dt, user_name = extract_datetime_range(input_str)
 
         ist = timezone("Asia/Kolkata")
-        start_dt = _parse_user_datetime(start_str)
-        end_dt = _parse_user_datetime(end_str)
-
         ist_start = ist.localize(start_dt) if start_dt.tzinfo is None else start_dt.astimezone(ist)
         ist_end = ist.localize(end_dt) if end_dt.tzinfo is None else end_dt.astimezone(ist)
+
+        if ist_start >= ist_end:
+            raise ValueError("The end time must be after the start time.")
 
         event = {
             "summary": f"Appointment with {user_name}",
@@ -115,13 +114,15 @@ def book_appointment(input_str: str) -> str:
 
         created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
         event_link = created.get("htmlLink", "Link unavailable")
+
         return (
-            f"✅ Booked appointment with {user_name} on {ist_start.strftime('%d %b %Y')} "
-            f"from {ist_start.strftime('%I:%M %p')} to {ist_end.strftime('%I:%M %p')} IST.\n📎 [Event Link]({event_link})"
+            f"✅ Booked appointment with **{user_name}** on **{ist_start.strftime('%d %B %Y')}** "
+            f"from **{ist_start.strftime('%I:%M %p')}** to **{ist_end.strftime('%I:%M %p')}** IST.\n"
+            f"[View event]({event_link})"
         )
     except Exception as e:
         logger.error("book_appointment error", exc_info=True)
-        return f"❌ Error booking appointment: {e}"
+        return f"❌ Failed to book appointment: {e}"
 
 def check_availability(date: str) -> str:
     if not calendar_service:
@@ -182,7 +183,7 @@ TOOLS = [
     Tool(
         name="book_appointment",
         func=book_appointment,
-        description="Book an appointment with start & end time: '2025-07-10 15:00 to 17:00, Amma'",
+        description="Book an appointment using natural language like 'book with Amma on July 11th, 2025 at 4pm to 7pm'",
     ),
 ]
 
