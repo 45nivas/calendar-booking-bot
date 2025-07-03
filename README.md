@@ -1,5 +1,4 @@
-[![🧠 AI Calendar Booking Chat](https://img.shields.io/badge/View_ChatGPT_Conversation-Click_Here-blue?style=for-the-badge)](https://chatgpt.com/c/68666923-3e38-8005-ba16-750ddd152f3c)
-
+[![🧠 Live Calendar Booking App](https://img.shields.io/badge/🚀%20Live%20App-Click%20Here-success?style=for-the-badge)](https://calendar-booking-bot-ty3fdmvpd6smrneuosax8y.streamlit.app/)
 
 # 🧠📅 AI Calendar Booking Bot
 
@@ -12,7 +11,7 @@ book appointment with Amma on July 11th, 2025 at 4pm to 7pm
 ## ✅ Features
 - Natural language booking using Groq LLaMA 3 (70B)
 - Date/time parsing with `dateparser`
-- Google Calendar integration with start and end time
+- Google Calendar integration with start and end timea
 - Check availability or suggest free/busy slots
 - Hosted frontend with Streamlit
 
