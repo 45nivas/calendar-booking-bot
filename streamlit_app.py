@@ -1,25 +1,5 @@
 # streamlit_app.py – Calendar‑booking Chatbot (Streamlit + LangChain + Google Calendar)
-# Updated: 2025‑07‑03
-"""
-Full working Streamlit application that chats with the user, checks availability and
-books Google Calendar events.  This version **fixes the one‑hour offset** by
-assuming the user’s input is in IST (Asia/Kolkata) and converting to UTC before
-calling the Calendar API.  It also performs flexible date parsing with
-`dateparser` and guards against users who already include a timezone offset.
-
-Requirements (add to your requirements.txt):
-    streamlit
-    google-api-python-client
-    google-auth
-    langchain
-    langchain-groq
-    pytz
-    python-dateparser
-
-Environment / secrets:
-    • GOOGLE_SERVICE_ACCOUNT_JSON  (or st.secrets["google_credentials"])
-    • GROQ_API_KEY
-"""
+# Updated: 2025‑07‑03 (Fixed: Timezone display issue)
 
 import streamlit as st
 import logging
@@ -36,7 +16,7 @@ from langchain_groq.chat_models import ChatGroq
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-from pytz import timezone, UTC
+from pytz import timezone
 import dateparser
 
 # ─────────────── Logging ───────────────
@@ -46,17 +26,14 @@ logger = logging.getLogger(__name__)
 # ────── Helpers ──────
 
 def _get_streamlit_secrets():
-    """Return st.secrets if running inside Streamlit, else an empty dict."""
     return getattr(st, "secrets", {}) if importlib.util.find_spec("streamlit") else {}
 
 
 # ────── Load Google credentials ──────
-
 def _load_google_credentials() -> Optional[service_account.Credentials]:
     scopes = ["https://www.googleapis.com/auth/calendar"]
     st_secrets = _get_streamlit_secrets()
 
-    # 1️⃣ st.secrets
     creds_dict = st_secrets.get("google_credentials")
     if creds_dict:
         try:
@@ -65,7 +42,6 @@ def _load_google_credentials() -> Optional[service_account.Credentials]:
         except Exception as e:
             logger.warning(f"Could not read creds from st.secrets: {e}")
 
-    # 2️⃣ Environment variable
     env_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if env_json:
         try:
@@ -74,7 +50,6 @@ def _load_google_credentials() -> Optional[service_account.Credentials]:
         except Exception as e:
             logger.warning(f"Env‑var creds invalid: {e}")
 
-    # 3️⃣ File path
     path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
     if os.path.exists(path):
         try:
@@ -85,9 +60,8 @@ def _load_google_credentials() -> Optional[service_account.Credentials]:
 
     return None
 
-
 # ────── Calendar Setup ──────
-CALENDAR_ID = "my-maps-project@potent-howl-456013-k9.iam.gserviceaccount.com"  # TODO: replace with your calendar ID
+CALENDAR_ID = "my-maps-project@potent-howl-456013-k9.iam.gserviceaccount.com"
 
 credentials = _load_google_credentials()
 if credentials:
@@ -97,21 +71,11 @@ else:
     calendar_service = None
     logger.error("Google Calendar credentials not found. Calendar tools disabled.")
 
-
 # ────── Utility functions ──────
-
 def _no_service_msg() -> str:
     return "Google Calendar is not configured (missing credentials)."
 
-
 def _parse_user_datetime(dt_str: str) -> datetime:
-    """Parse a user‑supplied date/time string.
-
-    • Tries `datetime.fromisoformat` first (strict ISO like 2025-07-04T17:00:00).
-    • Falls back to `dateparser.parse` which understands things like
-      "4 July 2025 5pm".
-    Throws ValueError if parsing fails.
-    """
     try:
         return datetime.fromisoformat(dt_str)
     except ValueError:
@@ -121,13 +85,9 @@ def _parse_user_datetime(dt_str: str) -> datetime:
         )
         if dt is None:
             raise ValueError(
-                "Could not parse date/time. Use e.g. '2025-07-04T17:00:00' "
-                "or '4 July 2025 5pm'."
+                "Could not parse date/time. Use e.g. '2025-07-04T17:00:00' or '4 July 2025 5pm'."
             )
         return dt
-
-
-# ────── Calendar tool implementations ──────
 
 def check_availability(date: str) -> str:
     if not calendar_service:
@@ -156,7 +116,6 @@ def check_availability(date: str) -> str:
         logger.error("check_availability error", exc_info=True)
         return f"Error checking availability: {e}"
 
-
 def suggest_slots(date_range: str) -> str:
     if not calendar_service:
         return _no_service_msg()
@@ -182,14 +141,10 @@ def suggest_slots(date_range: str) -> str:
         logger.error("suggest_slots error", exc_info=True)
         return f"Error suggesting slots: {e}"
 
-
 def _split_input(input_str: str) -> Tuple[str, str]:
-    """Return (date_time_part, name_part) from user input."""
     if "," in input_str:
         return [x.strip() for x in input_str.split(",", 1)]
-    # Fallback: first whitespace is separator
     return input_str.strip().split(" ", 1)
-
 
 def book_appointment(input_str: str) -> str:
     if not calendar_service:
@@ -197,41 +152,28 @@ def book_appointment(input_str: str) -> str:
     try:
         date_time_str, user_name = _split_input(input_str)
 
-        # 1️⃣ Parse user‑supplied local (IST) datetime (might already have tz)
         ist = timezone("Asia/Kolkata")
         user_dt = _parse_user_datetime(date_time_str)
+        ist_dt = ist.localize(user_dt) if user_dt.tzinfo is None else user_dt.astimezone(ist)
 
-        # 2️⃣ Ensure dt is timezone‑aware in IST
-        if user_dt.tzinfo is None:
-            ist_dt = ist.localize(user_dt)
-        else:
-            ist_dt = user_dt.astimezone(ist)
-
-        # 3️⃣ Convert to UTC for Calendar API
-        start_dt = ist_dt.astimezone(UTC)
-        end_dt = start_dt + timedelta(hours=1)
-
-        # 4️⃣ Create event
         event = {
             "summary": f"Appointment with {user_name}",
-            "start": {"dateTime": start_dt.isoformat(), "timeZone": "UTC"},
-            "end": {"dateTime": end_dt.isoformat(), "timeZone": "UTC"},
+            "start": {"dateTime": ist_dt.isoformat(), "timeZone": "Asia/Kolkata"},
+            "end": {"dateTime": (ist_dt + timedelta(hours=1)).isoformat(), "timeZone": "Asia/Kolkata"},
         }
+
         logger.info(f"Creating event: {event}")
         created = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-
         event_link = created.get("htmlLink", "Link unavailable")
         return (
-            f"Booked {user_name} at {ist_dt.strftime('%Y‑%m‑%d %I:%M %p')} IST. "
+            f"Booked {user_name} at {ist_dt.strftime('%Y-%m-%d %I:%M %p')} IST. "
             f"Link: {event_link}"
         )
     except Exception as e:
         logger.error("book_appointment error", exc_info=True)
         return f"Error booking appointment: {e}"
 
-
 # ────── LangChain Agent Setup ──────
-
 TOOLS = [
     Tool(
         name="check_availability",
@@ -266,9 +208,7 @@ agent = initialize_agent(
     verbose=True,
 )
 
-
 # ────── Streamlit UI ──────
-
 st.title("Calendar Booking Bot 🤖📅")
 st.write("Ask me to check availability, suggest slots, or book an appointment!")
 
@@ -276,7 +216,6 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "pending_input" not in st.session_state:
     st.session_state.pending_input = ""
-
 
 def _on_send():
     user_input = st.session_state.pending_input
@@ -289,7 +228,6 @@ def _on_send():
     st.session_state.history.append(("You", user_input))
     st.session_state.history.append(("Bot", answer))
     st.session_state.pending_input = ""
-
 
 st.text_input("Your message:", key="pending_input", on_change=_on_send)
 
