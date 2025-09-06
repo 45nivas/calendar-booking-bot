@@ -30,11 +30,6 @@ book appointment with Amma on July 11th, 2025 at 4pm to 7pm
 - Google Calendar API
 - Dateparser
 
-## 🔗 Live App
-[👉 Try the Booking Bot (Streamlit)](https://your-live-url.streamlit.app)
-
-## 📁 Repository
-[📂 GitHub Code](https://github.com/yourusername/ai-calendar-bot)
 
 ## 🔑 Setup Instructions
 
